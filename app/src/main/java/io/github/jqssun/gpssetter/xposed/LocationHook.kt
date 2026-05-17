@@ -38,22 +38,17 @@ object LocationHook {
             val y = (rand.nextInt(50) - 15).toDouble()
             val dlat = x / earth
             val dlng = y / (earth * cos(pi * settings.getLat / 180.0))
-            newlat =
-                if (settings.isRandomPosition) settings.getLat + (dlat * 180.0 / pi) else settings.getLat
-            newlng =
-                if (settings.isRandomPosition) settings.getLng + (dlng * 180.0 / pi) else settings.getLng
+            newlat = if (settings.isRandomPosition) settings.getLat + (dlat * 180.0 / pi) else settings.getLat
+            newlng = if (settings.isRandomPosition) settings.getLng + (dlng * 180.0 / pi) else settings.getLng
             accuracy = settings.accuracy!!.toFloat()
-
         } catch (e: Exception) {
-            Timber.tag("GPS Setter")
-                .e(e, "Failed to get XposedSettings for %s", context.packageName)
+            Timber.tag("GPS Setter").e(e, "Failed to get XposedSettings for %s", context.packageName)
         }
     }
 
     @SuppressLint("NewApi")
     fun initHooks(lpparam: XC_LoadPackage.LoadPackageParam) {
 
-        // 1. استهداف خادم النظام الأساسي (System Server)
         if (lpparam.packageName == "android") { 
             XposedBridge.log("Hooking system server (Global Mode)")
             if (settings.isStarted && !ignorePkg.contains(lpparam.packageName)) {
@@ -62,10 +57,9 @@ object LocationHook {
                 }
 
                 if (Build.VERSION.SDK_INT < 34) {
-                    val LocationManagerServiceClass = XposedHelpers.findClass("com.android.server.LocationManagerService", lpparam.classLoader)
+                    val locationManagerServiceClass = XposedHelpers.findClass("com.android.server.LocationManagerService", lpparam.classLoader)
                     
-                    // منع تسريب بيانات الأقمار الصناعية الخام (GNSS)
-                    for (method in LocationManagerServiceClass.declaredMethods) {
+                    for (method in locationManagerServiceClass.declaredMethods) {
                         if (method.returnType == Boolean::class.java) {
                             if (method.name == "addGnssBatchingCallback" || method.name == "addGnssMeasurementsListener" || method.name == "addGnssNavigationMessageListener") {
                                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
@@ -81,11 +75,9 @@ object LocationHook {
                         }
                     })
                 } else {
-                    // دعم أندرويد 14 وما فوق (SDK 34+)
-                    val LocationManagerServiceClass = XposedHelpers.findClass("com.android.server.location.LocationManagerService", lpparam.classLoader)
+                    val locationManagerServiceClass = XposedHelpers.findClass("com.android.server.location.LocationManagerService", lpparam.classLoader)
                     
-                    // منع تسريب GNSS في أندرويد الحديث
-                    for (method in LocationManagerServiceClass.declaredMethods) {
+                    for (method in locationManagerServiceClass.declaredMethods) {
                         if (method.returnType == Void::class.java) {
                             if (method.name == "startGnssBatch" || method.name == "addGnssAntennaInfoListener" || method.name == "addGnssMeasurementsListener" || method.name == "addGnssNavigationMessageListener") {
                                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
@@ -95,7 +87,7 @@ object LocationHook {
                         }
                     }
 
-                    XposedHelpers.findAndHookMethod(LocationManagerServiceClass, "injectLocation", Location::class.java, object : XC_MethodHook() {
+                    XposedHelpers.findAndHookMethod(locationManagerServiceClass, "injectLocation", Location::class.java, object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
                             injectMockLocation(param)
                         }
@@ -103,13 +95,11 @@ object LocationHook {
                 }
             }
         } 
-        // 2. استهداف خدمات جوجل بلاي لضمان التزييف الشامل (Fused Location)
         else if (lpparam.packageName == "com.google.android.gms") {
             if (settings.isStarted) {
-                // نقوم بحقن الكلاسات الخاصة بخدمات جوجل لضمان عدم تجاوز التزييف
                 try {
-                    val FusedLocationClass = XposedHelpers.findClass("com.google.android.location.fused.FusedLocationProvider", lpparam.classLoader)
-                    XposedHelpers.findAndHookMethod(FusedLocationClass, "reportLocation", Location::class.java, object : XC_MethodHook() {
+                    val fusedLocationClass = XposedHelpers.findClass("com.google.android.location.fused.FusedLocationProvider", lpparam.classLoader)
+                    XposedHelpers.findAndHookMethod(fusedLocationClass, "reportLocation", Location::class.java, object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
                             if (System.currentTimeMillis() - mLastUpdated > 200) updateLocation()
                             injectMockLocation(param)
@@ -122,15 +112,13 @@ object LocationHook {
         }
     }
 
-    // دالة مساعدة لتقليل تكرار الكود، تقوم بتجهيز الموقع المزيف وتخطي اكتشافه
     private fun injectMockLocation(param: XC_MethodHook.MethodHookParam) {
-        lateinit var location: Location
-        lateinit var originLocation: Location
+        val location: Location
         if (param.args[0] == null) {
             location = Location(LocationManager.GPS_PROVIDER)
             location.time = System.currentTimeMillis() - 300
         } else {
-            originLocation = param.args[0] as Location
+            val originLocation = param.args[0] as Location
             location = Location(originLocation.provider)
             location.time = originLocation.time
             location.accuracy = accuracy
@@ -152,14 +140,5 @@ object LocationHook {
             XposedBridge.log("LocationHook: unable to set mock $e")
         }
         param.args[0] = location
-    }
-}
-        try {
-            HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
-        } catch (e: Exception) {
-            // تجاهل الخطأ إذا فشل
-        }
-        
-        return location
     }
 }
